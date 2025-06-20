@@ -2,16 +2,12 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include "symbole.h"
+#include "ds18b20_lib.h"
 #include <avr/interrupt.h>
 
 #define CLK PC2
 #define DT  PC3
 #define SW  PC4
-#define przycisk PC5
-#define OW_DDR DDRC
-#define OW_PORT PORTC
-#define OW_PIN PINC
-#define OW_BIT PC0
 #define RS PD7
 #define E PD2
 #define D4 PD3
@@ -210,7 +206,7 @@ void indeks(void){
   
 }
 
-void nowalinia(){
+void nowalinia(void){
   //  RS na 0
   PORTD &=~(1<<RS);
   //  E
@@ -394,12 +390,12 @@ void lcd_init(void)
 
 int main(void)
 {
-  DDRC &= ~((1<<CLK) | (1<<DT) | (1<<SW) |(1<<przycisk));
-  PORTC |= (1<<CLK) | (1<<DT) | (1<<SW) | (1<<przycisk); //inputy na enkoder
+  DDRC &= ~((1<<CLK) | (1<<DT) | (1<<SW));
+  PORTC |= (1<<CLK) | (1<<DT) | (1<<SW); //inputy na enkoder
   
   DDRD = 0xFF;
   PORTD = 0x00;
-  setup_onewire_pin();
+  setup_onewire_pin(&DDRC, &PORTC, PC0);
   _delay_ms(50);
   lcd_init();
   select_ekran();
@@ -411,12 +407,6 @@ int main(void)
   OCR1A = 15624;                        //(16MHz /(1024 * 1 Hz))-1
   TIMSK1 |= (1 << OCIE1A);             
   TCCR1B |= (1 << CS12) | (1 << CS10); //prescaler 1024
-  /*dla 32a jakby co:
-  DDRD &= ~(1 << DDD2);
-  PORTD |= (1 << PORTD2);
-  MCUCR |= (1 << ISC01);
-  GICR |= (1 << INT0);
-  sei();*/
 
   uint8_t last_state = (PINC & (1<<CLK)) >> CLK;
 
@@ -589,7 +579,7 @@ void ekran_temperatura() {
   symbol(m);
   symbol(p);
   symbol(spacja);
-  int16_t temperatura2 = get_temperature_reading();
+  int16_t temperatura2 = get_temperature_reading(&DDRC, &PORTC, &PINC, PC0);
   int16_t temp_c = temperatura2 / 16;
 
   uint8_t dziesiatki = temp_c / 10;
@@ -606,105 +596,5 @@ void ekran_temperatura() {
   symbol(stopnie);
   symbol(C);
 
-}
-void setup_onewire_pin(void) {
-  OW_DDR &= ~(1 << OW_BIT);
-  OW_PORT |= (1 << OW_BIT);
-}
-void pull_low(void) { 
-  OW_DDR |= (1 << OW_BIT);
-  OW_PORT &= ~(1 << OW_BIT);
-}
-void let_float(void) { 
-  OW_DDR &= ~(1 << OW_BIT);
-  OW_PORT |= (1 << OW_BIT);
-}
-
-uint8_t sample_line_state(void) { 
-  uint8_t pin_mask = (1 << OW_BIT);
-  uint8_t pin_reading = OW_PIN & pin_mask;
-  
-  if (pin_reading != 0) {
-    return 1;
-  } else {
-    return 0;
-  }
-}
-
-uint8_t perform_bus_reset(void) {
-  uint8_t device_detected;
-  pull_low();
-  _delay_us(480);
-  let_float();
-  _delay_us(70);
-  device_detected = !sample_line_state();
-  _delay_us(410);
-  return device_detected;
-}
-
-void transmit_single_bit(uint8_t bit_value) {
-  pull_low();
-  if (bit_value != 0) { 
-    _delay_us(6); 
-    let_float(); 
-    _delay_us(64); 
-  } else { 
-    _delay_us(60); 
-    let_float(); 
-    _delay_us(10); 
-  }
-}
-
-uint8_t receive_single_bit(void) {
-  uint8_t bit_result;
-  pull_low();
-  _delay_us(6);
-  let_float();
-  _delay_us(9);
-  bit_result = sample_line_state();
-  _delay_us(55);
-  return bit_result;
-}
-
-void send_byte_data(uint8_t data) {
-  uint8_t bit_index = 0;
-  while (bit_index < 8) {
-    transmit_single_bit(data & 0x01);
-    data >>= 1;
-    bit_index++;
-  }
-}
-
-uint8_t get_byte_data(void) {
-  uint8_t received_data = 0;
-  uint8_t bit_counter = 0;
-  while (bit_counter < 8) {
-    received_data >>= 1;
-    if (receive_single_bit()) {
-      received_data |= 0x80;
-    }
-    bit_counter++;
-  }
-  return received_data;
-}
-
-int16_t get_temperature_reading(void) {
-  if (!perform_bus_reset()) return -1000;
-  
-  send_byte_data(0xCC);
-  send_byte_data(0x44);
-  uint16_t wait_counter = 0;
-  while (wait_counter < 750) {
-    _delay_ms(1);
-    if (sample_line_state()) break;
-    wait_counter++;
-  }
-  
-  if (!perform_bus_reset()) return -1000;
-  send_byte_data(0xCC); 
-  send_byte_data(0xBE);
-  uint8_t low_byte = get_byte_data();
-  uint8_t high_byte = get_byte_data();
-  return (high_byte << 8) | low_byte;
 }
 
